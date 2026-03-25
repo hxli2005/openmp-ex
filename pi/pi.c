@@ -12,6 +12,8 @@ typedef enum {
 	METHOD_2,
 	METHOD_3,
 	METHOD_4,
+	METHOD_5,
+	METHOD_6,
 	METHOD_COUNT
 } Method;
 
@@ -27,6 +29,10 @@ static const char *method_name(Method m) {
 		return "3";
 	case METHOD_4:
 		return "4";
+	case METHOD_5:
+		return "5_simd";
+	case METHOD_6:
+		return "6_ilp_simd";
 	default:
 		return "unknown";
 	}
@@ -55,44 +61,42 @@ static double pi_serial(long num_steps) {
 }
 
 static double pi_omp_1(long num_steps, int threads) {
-	double step = 1.0 / (double)num_steps;
-	double sum = 0.0;
-	double *partial = (double *)calloc((size_t)threads, sizeof(double));
-	if (partial == NULL) {
-		return 0.0;
-	}
-	omp_set_num_threads(threads);
-
-#pragma omp parallel for schedule(static, 1)
-	for (long i = 0; i < num_steps; ++i) {
-		int id = omp_get_thread_num();
-		double x = (i + 0.5) * step;
-		partial[id] += 4.0 / (1.0 + x * x);
-	}
-
-	for (int t = 0; t < threads; ++t) {
-		sum += partial[t];
-	}
-
-	free(partial);
-	return step * sum;
+	 	  
+	  double x, sum[threads]; 
+	  double pi = 0.0;
+	  for (int i = 0; i < threads; ++i) {
+		  sum[i] = 0.0;
+	  }
+	  double step = 1.0/(double) num_steps; 
+	  omp_set_num_threads(threads); 
+	 #pragma omp parallel 
+	 {	      
+		int i,id; 
+	  	id = omp_get_thread_num(); 
+	  	for (i=id;i< num_steps; i=i+threads){
+		  	x = (i+0.5)*step; 
+		  	sum[id] += 4.0/(1.0+x*x); 
+	  	} 
+	 } 
+	  for(int j=0;j<threads;j++)
+		pi += sum[j] * step; 
+		return pi;
 }
 
 static double pi_omp_2(long num_steps, int threads) {
 	double step = 1.0 / (double)num_steps;
 	double sum = 0.0;
-	double *partial = (double *)calloc((size_t)threads, sizeof(double));
-	if (partial == NULL) {
-		return 0.0;
+	double partial[threads];
+	for (int i = 0; i < threads; ++i) {
+		partial[i] = 0.0;
 	}
 	omp_set_num_threads(threads);
 
 #pragma omp parallel
 	{
 		int id = omp_get_thread_num();
-		partial[id] = 0.0;
 
-#pragma omp for 
+#pragma omp for
 		for (long i = 0; i < num_steps; ++i) {
 			double x = (i + 0.5) * step;
 			partial[id] += 4.0 / (1.0 + x * x);
@@ -102,8 +106,6 @@ static double pi_omp_2(long num_steps, int threads) {
 	for (int t = 0; t < threads; ++t) {
 		sum += partial[t];
 	}
-
-	free(partial);
 	return step * sum;
 }
 
@@ -139,6 +141,50 @@ static double pi_omp_4(long num_steps, int threads) {
 	return step * sum;
 }
 
+static double pi_omp_5(long num_steps, int threads) {
+	double step = 1.0 / (double)num_steps;
+	double sum = 0.0;
+	omp_set_num_threads(threads);
+
+	#pragma omp parallel for simd reduction(+:sum) schedule(static)
+	for (long i = 0; i < num_steps; ++i) {
+		double x = (i + 0.5) * step;
+		sum += 4.0 / (1.0 + x * x);
+	}
+
+	return step * sum;
+}
+
+static double pi_omp_6(long num_steps, int threads) {
+	double step = 1.0 / (double)num_steps;
+	double sum0 = 0.0, sum1 = 0.0, sum2 = 0.0, sum3 = 0.0;
+	omp_set_num_threads(threads);
+
+	#pragma omp parallel for simd reduction(+:sum0, sum1, sum2, sum3) schedule(static)
+	for (long i = 0; i < num_steps / 4; ++i) {
+		long idx = i * 4;
+		double x0 = (idx + 0.5) * step;
+		double x1 = (idx + 1.5) * step;
+		double x2 = (idx + 2.5) * step;
+		double x3 = (idx + 3.5) * step;
+
+		sum0 += 4.0 / (1.0 + x0 * x0);
+		sum1 += 4.0 / (1.0 + x1 * x1);
+		sum2 += 4.0 / (1.0 + x2 * x2);
+		sum3 += 4.0 / (1.0 + x3 * x3);
+	}
+
+	double sum = sum0 + sum1 + sum2 + sum3;
+
+	// 处理末尾不足4步的余项
+	for (long i = num_steps - (num_steps % 4); i < num_steps; ++i) {
+		double x = (i + 0.5) * step;
+		sum += 4.0 / (1.0 + x * x);
+	}
+
+	return step * sum;
+}
+
 static double run_method(Method m, long num_steps, int threads) {
 	switch (m) {
 	case METHOD_SERIAL:
@@ -151,6 +197,10 @@ static double run_method(Method m, long num_steps, int threads) {
 		return pi_omp_3(num_steps, threads);
 	case METHOD_4:
 		return pi_omp_4(num_steps, threads);
+	case METHOD_5:
+		return pi_omp_5(num_steps, threads);
+	case METHOD_6:
+		return pi_omp_6(num_steps, threads);
 	default:
 		return 0.0;
 	}
@@ -197,8 +247,8 @@ static int append_csv(const char *csv_path,
 
 int main(int argc, char *argv[]) {
 	long num_steps = 100000000;
-	int repeats = 3;
-	int threads = 16;
+	int repeats = 300;
+	int threads = 10;
 	const char *csv_path = "pi_results.csv";
 	const double pi_ref = acos(-1.0);
 
@@ -263,7 +313,9 @@ int main(int argc, char *argv[]) {
 		METHOD_1,
 		METHOD_2,
 		METHOD_3,
-		METHOD_4
+		METHOD_4,
+		METHOD_5,
+		METHOD_6
 	};
 	int method_count = (int)(sizeof(methods) / sizeof(methods[0]));
 
