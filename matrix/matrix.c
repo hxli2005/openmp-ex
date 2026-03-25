@@ -3,7 +3,9 @@
 #include <time.h>
 #include <string.h>
 #include <omp.h>
+#ifdef __APPLE__
 #include <Accelerate/Accelerate.h>
+#endif
 
 
 static double now_seconds(void) {
@@ -147,6 +149,7 @@ static void parallel_matmul_double_blocked(const double *a, const double *b, dou
 // Apple Accelerate BLAS 方法：使用 cblas_dgemm
 // C = A * B，利用 Apple 优化的 BLAS 库和多核支持
 static void parallel_matmul_accelerate(const double *a, const double *b, double *c, int n) {
+#ifdef __APPLE__
 	// cblas_dgemm: C = alpha * A * B + beta * C
 	// CblasRowMajor: 行优先存储（C 语言惯例）
 	// CblasNoTrans: 不转置 A 和 B
@@ -159,6 +162,10 @@ static void parallel_matmul_accelerate(const double *a, const double *b, double 
 	            b, n,
 	            0.0,
 	            c, n);
+#else
+	fprintf(stderr, "Error: Accelerate framework is only available on macOS.\n");
+	exit(1);
+#endif
 }
 
 typedef enum {
@@ -222,6 +229,7 @@ static int append_result_csv(
 ) {
 	FILE *fp = fopen(csv_path, "a+");
 	if (fp == NULL) {
+        perror("fopen failed");
 		return 0;
 	}
 
@@ -253,7 +261,7 @@ int main(int argc, char *argv[]) {
 	int block_size = 64;
 	int macro_block_size = 128;
 	int micro_block_size = 32;
-	const char *csv_path = "matrix_results_new.csv";
+	const char *csv_path = "matrix_results_avx512.csv";
 
 	if (argc >= 4) {
 		n = atoi(argv[1]);
